@@ -1,0 +1,18 @@
+[package]
+name = "cgogen"
+version = "0.1.0"
+authors = ["chris.henderson <chris.henderson@alation.com>"]
+edition = "2018"
+
+
+#[lib]
+#proc-macro = true
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+#syn = {version = "1.0.14", features = ["derive", "extra-traits", "visit", "visit-mut", "clone-impls", "full"]}
+#quote = "1.0.2"
+#proc-macro2 = "1.0.8"
+
+[dev-dependencies]
+lazy_static = "*"

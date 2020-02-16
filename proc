@@ -1,0 +1,110 @@
+extern crate proc_macro;
+
+use proc_macro::TokenStream;
+use quote::format_ident;
+use quote::quote;
+
+extern crate syn;
+use std::sync::Once;
+use syn::visit_mut::VisitMut;
+use syn::*;
+use syn::{Data, DeriveInput};
+
+static TRAIT: Once = Once::new();
+
+static PREFIX: &str = "Cgo";
+
+#[proc_macro_derive(Cgo)]
+pub fn c(stream: TokenStream) -> TokenStream {
+    let tokens: DeriveInput = syn::parse(stream).unwrap();
+
+    let mut data = match tokens.data {
+        Data::Struct(data) => data,
+        _ => panic!("asdasd"),
+    };
+    Renamer {}.visit_data_struct_mut(&mut data);
+    let fields = data.fields.iter();
+    let name = format_ident!("{}{}", PREFIX, tokens.ident);
+    let original = tokens.ident;
+    let field_names: Vec<proc_macro2::Ident> = data
+        .fields
+        .iter()
+        .map(|field| {
+            proc_macro2::Ident::new(
+                field.ident.clone().unwrap().to_string().as_ref(),
+                proc_macro2::Span::call_site(),
+            )
+        })
+        .collect();
+    let mut f = TokenStream::from(quote! {});
+    TRAIT.call_once(|| f.extend(make_traits()));
+    f.extend(TokenStream::from(quote! {
+        #[repr(C)]
+        pub struct #name {
+            #(#fields),*
+        }
+
+        impl AsCgo for #original {
+            type Target = #name;
+
+            fn as_cgo(&self) -> Self::Target {
+                 #name {
+                    #(#field_names: self.#field_names.as_cgo()),*
+                 }
+            }
+        }
+    }));
+    f
+}
+
+//#[proc_macro_attribute]
+//pub fn cgo_extern(target: TokenStream, getter: TokenStream) -> TokenStream {
+//        let tokens: DeriveInput = syn::parse(target).unwrap();
+//
+//    let mut data = match tokens.data {
+//        Data::Struct(data) => data,
+//        _ => panic!("asdasd"),
+//    };
+//    let original = tokens.ident;
+//    let ret = format_ident!("Cgo{}", original);
+//    let name = format_ident!("cgo_get_{}", original);
+//    let getter = format_ident!("{}", getter.to_string());
+//    TokenStream::from(quote! {
+//         #[no_mangle]
+//        pub extern fn #name() -> *mut #ret {
+//            Box::into_raw(Box::new(#name().as_cgo()))
+//        }
+//    })
+//}
+
+struct Renamer {}
+
+impl VisitMut for Renamer {
+    fn visit_type_mut(&mut self, i: &mut Type) {
+        match i {
+            Type::Path(TypePath { qself: _, path }) => match path.get_ident() {
+                Some(ident) if ident.to_string().as_str() == "String" => *i = make_const_otr(),
+                Some(ident)
+                    if vec![
+                        "i8", "u8", "i16", "u16", "i32", "u32", "i64", "u64", "usize", "f32",
+                        "f64", "bool", "String",
+                    ]
+                    .contains(&ident.to_string().as_str()) =>
+                {
+                    ()
+                }
+                Some(ident) => {
+                    let new =
+                        syn::Ident::new(format!("{}{}", PREFIX, ident.to_string()).as_ref(), ident.span());
+                    *i = Type::Verbatim(proc_macro2::TokenStream::from(quote!{#new}))
+                }
+                _ => (),
+            },
+            _ => (),
+        }
+    }
+}
+
+fn make_const_otr() -> Type {
+    Type::Verbatim(proc_macro2::TokenStream::from(quote! {CgoArray<u8>}))
+}
