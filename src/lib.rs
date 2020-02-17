@@ -1,124 +1,67 @@
-use std::os::raw::*;
-use std::convert::TryFrom;
+
 use std::ffi::CString;
+use std::fmt::{Display, Error, Formatter, Write};
 
-/// Primitive Impls
-pub trait Primitive: Copy + Clone {}
-
-impl Primitive for c_char {}
-impl Primitive for c_double {}
-impl Primitive for c_float {}
-impl Primitive for c_int {}
-impl Primitive for c_long {}
-// @TODO conditional compilation these or something
-// These are platform specific
-//impl Primitive for c_longlong {}
-//impl Primitive for c_schar {}
-impl Primitive for c_short {}
-impl Primitive for c_uchar {}
-impl Primitive for c_uint {}
-impl Primitive for c_ulong {}
-//impl Primitive for c_ulonglong {}
-impl Primitive for c_ushort {}
-
-impl C for c_void {}
+use libc::c_char;
+use libc::c_double;
+use libc::c_float;
+use libc::c_int;
+use libc::c_long;
+use libc::c_short;
+use libc::c_uchar;
+use libc::c_uint;
+use libc::c_ulong;
+use libc::c_ushort;
 
 /// Traits
 pub trait C: Sized {}
 
-pub trait AsC {
-    type Target: C;
-    fn as_c(&self) -> &Self::Target;
-}
+impl C for c_char {}
+impl C for c_double {}
+impl C for c_float {}
+impl C for c_int {}
+impl C for c_long {}
+impl C for c_short {}
+impl C for c_uchar {}
+impl C for c_uint {}
+impl C for c_ulong {}
+impl C for c_ushort {}
 
-pub trait IntoC {
-    type Target: C;
-    fn into_c(self) -> Self::Target;
-}
-
-
-pub trait TryIntoC<T: C> {
-    type Error;
-    fn try_into_c(self) -> Result<T, Self::Error>;
-}
-
-pub trait TryFromC<T>: C {
-    type Error;
-    fn try_from_c(value: T) -> Result<Self, Self::Error>;
-}
-
-
-/// Blanket Implementations
-impl <U: C, T: TryFromC<U>> TryIntoC<T> for U {
-    type Error = T::Error;
-
-    fn try_into_c(self) -> Result<T, Self::Error> {
-        T::try_from_c(self)
+pub trait IntoRaw: Sized {
+    fn into_raw(self) -> *mut Self {
+        Box::into_raw(Box::new(self))
     }
 }
 
 
+impl <T: C> IntoRaw for T {}
 
-impl <T: Primitive> C for T {}
-
-impl<T: Primitive> AsC for T {
-    type Target = Self;
-    fn as_c(&self) -> &Self::Target {
-        self
-    }
-}
-
-impl<T: Primitive> IntoC for T {
-    type Target = Self;
-    fn into_c(self) -> Self::Target {
-        self
-    }
-}
-
-impl <T: Primitive> TryFromC<T> for T {
-    type Error = std::convert::Infallible;
-
-    fn try_from_c(value: T) -> Result<Self, Self::Error> {
-        Ok(value)
-    }
-}
-
-/// Array Type
+// @TODO These are platform specific, conditional compilation these out or something
+//impl C for c_longlong {}
+//impl C for c_schar {}
+//impl C for c_ulonglong {}
 
 #[repr(C)]
-pub struct RustBuffer<T> {
+pub struct RustBuffer<T: C> {
     data: *mut T,
-    len: usize
+    len: usize,
 }
 
-impl <T> RustBuffer<T> {
+impl<T: C> C for RustBuffer<T> {}
+
+impl<T: C> RustBuffer<T> {
     pub fn into_raw(self) -> *mut Self {
         Box::into_raw(Box::new(self))
     }
     pub fn from_raw(raw: *mut Self) -> Self {
-        unsafe{*Box::from_raw(raw)}
+        unsafe { *Box::from_raw(raw) }
     }
     pub fn iter(&self) -> std::slice::Iter<'_, T> {
-        unsafe{std::slice::from_raw_parts(self.data, self.len)}.iter()
+        unsafe { std::slice::from_raw_parts(self.data, self.len) }.iter()
     }
 }
 
-impl <T: IntoC> From<Vec<T>> for RustBuffer<T::Target> {
-    fn from(array: Vec<T>) -> Self {
-        let mut array: Vec<T::Target> = array.into_iter().map(|item| item.into_c()).collect();
-        array.shrink_to_fit(); // Is this necessary? Will map give us the right capacity here?
-        let ptr = array.as_mut_ptr();
-        let len = array.len();
-        std::mem::forget(array);
-        RustBuffer {
-            data: ptr,
-            len: len
-        }
-    }
-}
-
-#[cfg(not(test))]
-impl <T> Drop for RustBuffer<T> {
+impl<T: C> Drop for RustBuffer<T> {
     fn drop(&mut self) {
         unsafe {
             let slice = std::slice::from_raw_parts_mut(self.data, self.len);
@@ -127,182 +70,154 @@ impl <T> Drop for RustBuffer<T> {
     }
 }
 
-
-#[no_mangle]
-pub extern fn rustfree(buf: *mut RustBuffer<c_void>) {
-    if buf.is_null() {
-        return;
-    }
-    RustBuffer::from_raw(buf);
-}
-
-/// A RustString is guaranteed to not have any interior null bytes,
-/// however it is NOT null terminated as it always comes with its length data.
-type RustString = RustBuffer<c_uchar>;
-
-impl TryFrom<String> for RustString {
-    type Error = std::ffi::NulError;
-
-    fn try_from(value: String) -> Result<Self, Self::Error> {
-        Ok(CString::new(value)?.into_bytes().into())
-    }
-}
-
-use std::fmt::{Write, Formatter, Error};
-
-impl std::fmt::Display for RustString {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
-        for i in self.iter() {
-            f.write_char(*i as char)?;
-        }
-        Ok(())
+impl<Goal, Src, Iter> From<Iter> for RustBuffer<Goal>
+where
+    Goal: C,
+    Src: Into<Goal>,
+    Iter: IntoIterator<Item = Src>,
+{
+    fn from(array: Iter) -> Self {
+        let mut array: Vec<Goal> = array.into_iter().map(|item| item.into()).collect();
+        array.shrink_to_fit(); // Is this necessary? Will map give us the right capacity here?
+        let data = array.as_mut_ptr();
+        let len = array.len();
+        // This MIGHT be a leak for the fat pointer data that array was keeping around.
+        // Although in casual testing this has been very hard to detect.
+        // Keep an eye on https://github.com/rust-lang/rust/issues/65816 as
+        // that is the API that we want.
+        std::mem::forget(array);
+        RustBuffer { data, len }
     }
 }
 
-impl std::fmt::Display for RustBuffer<RustString> {
+impl<T: Display + C> Display for RustBuffer<T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
-        f.write_char('[')?;
-        for (i, item) in self.iter().enumerate() {
-            f.write_fmt(format_args!("\t{}", item))?;
-            if i != self.len - 1 {
-                f.write_char(',')?;
-            }
+        f.write_str("[\n")?;
+        for item in self.iter() {
+            f.write_fmt(format_args!("\t{},\n", item))?;
         }
         f.write_char(']')?;
         Ok(())
     }
 }
 
-#[cfg(test)]
-#[macro_use]
-extern crate lazy_static;
+#[repr(C)]
+/// A RustString wraps a RustBuffer<c_uchar>.
+///
+/// RustString's str_len is the length of the string WITHOUT the null byte.
+/// To get the length of the entire buffer, including the null byte, access
+/// the internal buffer's own len field.
+pub struct RustString {
+    buf: RustBuffer<c_uchar>,
+    str_len: usize,
+    free: *const *mut RustString
+}
+
+impl C for RustString {}
+
+impl RustString {
+    pub fn new<T: Into<Vec<u8>>>(string: T) -> Result<Self, std::ffi::NulError> {
+        let buf: RustBuffer<c_uchar> = CString::new(string)?.into_bytes_with_nul().into();
+        let str_len = buf.len - 1;
+        Ok(RustString { buf, str_len, free: RustString::free as *const *mut RustString })
+    }
+
+//    #[no_mangle]
+    pub extern fn free(ptr: *mut Self) {
+        Box::new(unsafe{Box::from_raw(ptr)});
+    }
+}
+
+impl Display for RustString {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
+        for (i, item) in self.buf.iter().enumerate() {
+            if i >= self.str_len {
+                break;
+            }
+            f.write_char(*item as char)?;
+        }
+        Ok(())
+    }
+}
+
+
+#[no_mangle]
+pub extern fn ruststringnew(len: usize) -> *mut RustString {
+    RustString::new(String::with_capacity(len)).unwrap().into_raw()
+}
+
+
+
+
+//#[repr(C)]
+//pub struct Thing {
+//    free: *const *mut Thing
+//}
+
+
+//impl Thing {
+//    pub fn new() -> Thing {
+//        Thing { free: Thing::free as *const *mut Thing }
+//    }
+//
+//    #[no_mangle]
+//    pub extern fn free(thing: *mut Thing) {
+//        println!("....hi?");
+////        Box::new(unsafe{Box::from_raw(thing)});
+//    }
+//}
+
+//#[no_mangle]
+//pub extern fn thingnew() -> *mut Thing {
+//    Box::into_raw(Box::new(Thing::new()))
+//}
 
 #[cfg(test)]
 mod tests {
-
     use super::*;
-    use std::convert::TryInto;
-    use std::sync::atomic::Ordering;
 
 
-    lazy_static! {
-        static ref FREES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-    }
-
-    /// 1:1 malloc to free assertion testing
-    ///
-    /// This needs to manually stay in-sync with the live implementation. It's intent is to
-    /// count the number of deallocations for tests that wish to assert a 1:1 malloc-to-free
-    ///
-    /// If you are getting testing failures regarding incorrect drop counts then you likely
-    /// need to run tests sequentially (cargo test -- --test-threads 1)
-    impl <T> Drop for RustBuffer<T> {
-        fn drop(&mut self) {
-            FREES.fetch_add(1, Ordering::Relaxed);
-            unsafe {
-                let slice = std::slice::from_raw_parts_mut(self.data, self.len);
-                Box::from_raw(slice as *mut [T]);
-            }
+    #[test]
+    fn arr() {
+        for _ in 0..1 {
+            let _buf: RustBuffer<c_float> = vec![1.0, 2.1, 3.4, 4.6].into();
         }
     }
 
     #[test]
-    fn test_primitive_as() {
-        assert_eq!(5.as_c(), &5);
-        assert_eq!(5.0.as_c(), &5.0);
+    fn string() {
+        let _string = RustString::new("asdsad").unwrap();
     }
 
     #[test]
-    fn test_primitive_into() {
-        assert_eq!(5.into_c(), 5);
-        assert_eq!(5.0_f32.into_c(), 5.0);
-    }
-    
-    #[test]
-    fn test_primitive_try_into() {
-        let five: c_char = 5;
-        let five: c_char = five.try_into_c().unwrap();
-        assert_eq!(five, 5);
-    }
-
-    #[test]
-    fn test_primitive_try_from() {
-        let five: c_char = c_char::try_from_c(5).unwrap();
-        assert_eq!(five, 5);
-    }
-    
-    #[test]
-    fn primitive_array() {
-        let _arr: RustBuffer<u8> = vec![1,2,3,4].into();
-    }
-
-    #[test]
-    fn one_to_one_malloc_to_free_from_drop() {
-        FREES.fetch_and(0, Ordering::SeqCst);
-        for _ in 0..100 {
-            let _: RustBuffer<u8> = vec![1,2,3].into();
+    fn string_buf() {
+        for _ in 0..10000000 {
+            let _buf: RustBuffer<RustString> = vec![
+                RustString::new("asdsad1").unwrap(),
+                RustString::new("asdsad2").unwrap(),
+                RustString::new("asdsad3").unwrap(),
+            ]
+            .into();
+//            rustfree(buf.into_raw() as *mut c_void);
         }
-        assert_eq!(FREES.load(Ordering::SeqCst), 100);
     }
 
     #[test]
-    fn one_to_one_malloc_to_free_from_extern_free() {
-        FREES.fetch_and(0, Ordering::SeqCst);
-        for _ in 0..100 {
-            let buf: RustBuffer<u8> = vec![1,2,3].into();
-            rustfree(buf.into_raw() as *mut RustBuffer<c_void>);
-        }
-        assert_eq!(FREES.load(Ordering::SeqCst), 100);
+    fn nested() {
+        let buf1: RustBuffer<RustString> = vec![
+            RustString::new("asdsad1").unwrap(),
+            RustString::new("asdsad2").unwrap(),
+            RustString::new("asdsad3").unwrap(),
+        ]
+        .into();
+        let buf2: RustBuffer<RustString> = vec![
+            RustString::new("asdsad4").unwrap(),
+            RustString::new("asdsad5").unwrap(),
+            RustString::new("asdsad6").unwrap(),
+        ]
+        .into();
+        let buf3: RustBuffer<RustBuffer<RustString>> = vec![buf2, buf1].into();
+        println!("{}", buf3);
     }
 
-    static LARGE: &str = include_str!("../proc");
-
-    #[test]
-    fn rust_string_free() {
-        FREES.fetch_and(0, Ordering::SeqCst);
-        for _ in 0..100 {
-            let buf: RustString = String::from(LARGE).try_into().unwrap();
-            rustfree(buf.into_raw() as *mut RustBuffer<c_void>);
-        }
-        assert_eq!(FREES.load(Ordering::SeqCst), 100);
-    }
-    
-    #[test]
-    fn rust_string_display() {
-        let want = String::from("This isn't the greatest song in the world");
-        let buf: RustString = want.clone().try_into().unwrap();
-        assert_eq!(format!("{}", buf), want);
-    }
-
-    #[test]
-    fn zero_len_buffer() {
-        let v: Vec<u8>= vec![];
-        let _: RustBuffer<u8> = v.into();
-    }
-    
-    #[test]
-    fn zero_len_string() {
-        let buf: RustString = String::with_capacity(0).try_into().unwrap();
-        assert_eq!(format!("{}", buf), String::from(""));
-    }
-    
-    #[test]
-    fn null_free() {
-        rustfree(std::ptr::null_mut());
-    }
-    
-    #[test]
-    fn inner_null_free() {
-        rustfree(RustBuffer {
-            data: std::ptr::null_mut(),
-            len: 0
-        }.into_raw());
-    }
-    
-    #[test]
-    fn array_of_strings() {
-        let arr: Vec<RustString> = vec!["a".to_string().try_into().unwrap(), "b".to_string().try_into().unwrap(), "c".to_string().try_into().unwrap()];
-        let buf: RustBuffer<RustString> = arr.into();
-//        let buf: RustBuffer<RustString> = arr.try_into().unwrap();
-    }
 }
