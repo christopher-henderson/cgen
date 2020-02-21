@@ -12,7 +12,6 @@ typedef struct RustBuffer_c_char {
   uintptr_t capacity;
   void (*free)(struct RustBuffer_c_char *ptr);
   void (*push)(struct RustBuffer_c_char *ptr, char value);
-  void (*push_all)(struct RustBuffer_c_char *ptr, char * value, size_t len);
 } RustBuffer_c_char;
 
 typedef RustBuffer_c_char RustCharBuffer;
@@ -99,26 +98,26 @@ typedef struct RustBuffer_c_ushort {
 
 typedef RustBuffer_c_ushort RustUshortBuffer;
 
-RustCharBuffer *new_rust_char_buffer(uintptr_t capacity);
+RustCharBuffer *new_rust_char_buffer(size_t capacity);
 
-RustString *new_rust_string(uintptr_t capacity);
+RustDoubleBuffer *new_rust_double_buffer(size_t capacity);
 
-RustDoubleBuffer *new_rust_double_buffer(uintptr_t capacity);
+RustFloatBuffer *new_rust_float_buffer(size_t capacity);
 
-RustFloatBuffer *new_rust_float_buffer(uintptr_t capacity);
+RustIntBuffer *new_rust_int_buffer(size_t capacity);
 
-RustIntBuffer *new_rust_int_buffer(uintptr_t capacity);
+RustLongBuffer *new_rust_long_buffer(size_t capacity);
 
-RustLongBuffer *new_rust_long_buffer(uintptr_t capacity);
+RustShortBuffer *new_rust_short_buffer(size_t capacity);
 
-RustShortBuffer *new_rust_short_buffer(uintptr_t capacity);
+RustString *new_rust_string(size_t capacity);
 
-RustUcharBuffer *new_rust_uchar_buffer(uintptr_t capacity);
+RustUcharBuffer *new_rust_uchar_buffer(size_t capacity);
 
-RustUintBuffer *new_rust_uint_buffer(uintptr_t capacity);
+RustUintBuffer *new_rust_uint_buffer(size_t capacity);
 
-RustUlongBuffer *new_rust_ulong_buffer(uintptr_t capacity);
+RustUlongBuffer *new_rust_ulong_buffer(size_t capacity);
 
-RustUshortBuffer *new_rust_ushort_buffer(uintptr_t capacity);
+RustUshortBuffer *new_rust_ushort_buffer(size_t capacity);
 
 #endif /* _RUST_CGEN_BINDINGS_H */
